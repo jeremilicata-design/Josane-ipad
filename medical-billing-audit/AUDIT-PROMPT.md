@@ -45,20 +45,42 @@ note is the provider for that encounter.
 
 ## 2. Traversal order — week by week, all providers together
 
-Do **not** process one provider for a whole year then move to the next. The
-frequency clocks in §5 are **per patient across all providers**, so a patient seen
-by Beth in March and Richter in April must be evaluated with both in view.
-
 - Work **one calendar month at a time, newest month first.**
 - Within a month, use the **weekly schedule view**, one week at a time.
 - Within a week, cover **all five providers** before advancing.
-- Produce one workbook per month, with a tab per provider.
+- One workbook per month, with a tab per provider.
 
 Newest-first matters: Medicare timely filing is 12 months from date of service, so
 the oldest end of the window is the least actionable if the run stops early.
 
 The schedule's date does **not** change the URL — navigation is by clicking the
 date picker. Use the weekly view to cut this from ~250 clicks per provider to ~52.
+
+### 2.1 Lookback scope for the frequency rules
+
+G0136 (6 months) and 95251 (30 days) are **per patient**, not per provider. A code
+entered by one provider satisfies the window for all of them.
+
+Two lookback scopes, with different costs:
+
+| Scope | What it checks | Cost | Setting |
+|---|---|---|---|
+| **In-run** | every encounter already scraped in this run, any provider, any week | free — data is already collected | **ON** |
+| **Chart history** | encounters from before this run's start date | requires opening each patient's chart history | **OFF** |
+
+**In-run lookback is ON.** Because all five providers are scraped for the same
+weeks, another provider's codes are already in `audit-state.json` when a patient is
+evaluated. Checking them costs no extra page loads. Never filter the lookback by
+provider.
+
+**Chart-history lookback is OFF** for now. When a rule's window reaches back before
+the run's start date, evaluate what is available and add `LOOKBACK LIMITED` to the
+Why Flagged column, so the reviewer knows that row was judged on a partial window.
+
+Each flagged row also carries an **Also Seen By** column naming any other provider
+who saw that patient in the same month. This measures how much cross-provider
+overlap actually exists — if it turns out to be negligible, the in-run lookback can
+be dropped later; if it is large, chart-history lookback should be turned on.
 
 ---
 
@@ -144,8 +166,10 @@ Source: chart documents → folder **`Insurance-documents`** (no sub-folder; con
 one SDOH file per assessment). The list view shows the **upload date**.
 
 For each Medicare patient, for each SDOH file dated in the window:
-1. Look back **180 days** across **all** that patient's encounters, any provider.
-   If `G0136` appears in any → **do not flag** (frequency already met).
+1. Look back **180 days** across that patient's encounters, **any provider**,
+   using the lookback scope in §2.1. If `G0136` appears in any → **do not flag**
+   (frequency already met). If the 180 days reach before the run's start date, mark
+   the row `LOOKBACK LIMITED`.
 2. Otherwise find the encounter **on the same date as the SDOH file**. If `G0136`
    is not in its Procedures → **flag**.
 3. No encounter on that date → **Exceptions**, reason `SDOH WITHOUT ENCOUNTER`.
@@ -180,8 +204,10 @@ providers**.
 
 Process each patient's reports **oldest to newest**:
 1. Take the earliest report date `D` not yet accounted for.
-2. Look across **all** that patient's encounters from `D - 30` through `D`, any
-   provider. If `95251` appears in any → satisfied; advance past this window.
+2. Look across that patient's encounters from `D - 30` through `D`, **any
+   provider**, using the lookback scope in §2.1. If `95251` appears in any →
+   satisfied; advance past this window. If the window reaches before the run's
+   start date, mark the row `LOOKBACK LIMITED`.
 3. If it appears nowhere in that window → **flag** (patient, DOB, `95251`).
 4. Then **advance the clock**: skip every later report dated within 30 days of `D`.
    They belong to the same window and must not produce a second row.
@@ -220,6 +246,7 @@ note that day.
 
 Rows 1–3 of each tab: summary counts, e.g.
 `Encounters reviewed: 412 | G2211: 31 | G0136: 4 | 95250: 8 | 95251: 14 | Prolia: 3`
+`Patients seen by more than one provider this month: 18`
 
 Then the header row and data:
 
@@ -233,7 +260,8 @@ Then the header row and data:
 | Visit Type | verbatim |
 | Insurance Plan | verbatim |
 | Medicare Type | `TRADITIONAL` / `ADVANTAGE` / `COMMERCIAL` / `UNCLEAR` |
-| Why Flagged | one line — the rule, plus `UNSIGNED NOTE` or `NO ENCOUNTER IN WINDOW` |
+| Also Seen By | other providers who saw this patient this month, or blank |
+| Why Flagged | one line — the rule, plus `UNSIGNED NOTE`, `NO ENCOUNTER IN WINDOW`, or `LOOKBACK LIMITED` |
 | Evidence | consent date / report date / SDOH date / plan name |
 | Confidence | `HIGH` or `REVIEW` |
 
