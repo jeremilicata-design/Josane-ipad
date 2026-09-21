@@ -9,7 +9,7 @@ Operating prompt for Claude Code. Runs on Jeremi's MacBook Pro against
 
 | Parameter | Value |
 |---|---|
-| Portal | `https://portal.medgener.com` |
+| Portal | `https://portal.medgenehr.com/medgenweb/` — Medgen EMR v9.6 |
 | Login | `<<FILL IN — username>>` / `<<FILL IN — password via env var, never in this file>>` |
 | Audit window | Run date minus 12 months → run date |
 | Output folder | `/Users/jeremi/Documents/EliteDiabetes - Billing report/` |
@@ -28,6 +28,20 @@ Operating prompt for Claude Code. Runs on Jeremi's MacBook Pro against
 | `SHAPIRO-SCOTT` | Dr. Shapiro | no appointments after 2026-01-30 |
 
 Provider for a row = whoever saw the patient and wrote that day's note.
+
+**Portal layout, confirmed from screen recordings:**
+- Top bar: `Open Chart`, `Schedule`, `Message Center`, `ICD-10`; right side `Support`,
+  `Reporting`. Open charts appear as tabs, each showing `Lastname, Fi. [patientID]`.
+- Schedule screen: practice dropdown (`ELITE DIABETES`) and provider dropdown; buttons
+  `Daily View`, `Weekly View`, `Monthly View`, `Reports`, `Utilities`,
+  `Find Available Appointments`, `Refresh`. `Appointment Info` panel bottom-left.
+- Right-clicking an appointment gives `Open Chart`, `Open Chart to...`,
+  `Lookup Appointments`, and write actions. **Use `Open Chart` only.**
+- Chart navigation (left panel): `Summary`, `Patient Information`, **`Encounters`**,
+  **`Chart Documents`**, `Inquiry`.
+- Chart header banner is always visible and carries name, DOB, age, and
+  **`Insurance:`** — e.g. `Insurance: Fl Medicare Part B (j9 First Coast)`.
+- **Use the numeric patient ID** from the chart tab as the key, not name + DOB.
 
 ---
 
@@ -87,6 +101,11 @@ Output of this phase: a roster of ~13,000 appointments, and a deduplicated patie
 list of roughly 2,000 unique patients.
 
 ### 3.1 Medicare status
+
+Read the plan name from the **chart header banner** (`Insurance: ...`), which is
+more reliable than the Appointment Info panel. A green Comment Alert reading
+`MEDICARE VERIFIED` or `MEDICARE & SUPP` is a corroborating signal when the plan
+name is ambiguous — never the primary source.
 
 From the plan name, set **Medicare Type**:
 `TRADITIONAL` (Medicare, Medicare Part B, Railroad Medicare), `ADVANTAGE` (Humana
@@ -154,8 +173,14 @@ For each such encounter: `G2211` not in Procedures → **flag**.
 
 ### 5.2 — G0136 · Medicare only · max once per 6 months
 
-Documents: folder **`Insurance-documents`** — no sub-folder, one SDOH file per
-assessment. The list shows the **upload date**.
+> **UNRESOLVED — DO NOT RUN THIS RULE YET.** Two charts were inspected and neither
+> contained an `Insurance-documents` folder or anything resembling an SDOH form.
+> The source for this rule is unconfirmed. Skip G0136 entirely and note it in the
+> Run Log until Jeremi identifies where the SDOH form actually lives. Running it
+> against a guessed folder would flag every Medicare patient in the practice.
+
+Documents: folder `<<FILL IN — confirmed SDOH folder name>>`, one file per
+assessment, date in the filename.
 
 Expect at most **two** G0136 in a 12-month window (one per six months).
 
@@ -174,9 +199,23 @@ means the assessment was not performed; there is nothing to code.
 
 ### 5.3 — 95250 · CGM placement · per placement, no monthly cap
 
-Documents: folder **`CGM Consent Form`**.
+Documents: the consent folder. **Folder names are free-typed and vary by patient.**
+Match case-insensitively any folder whose name contains `consent` together with
+`CGM`, `Libre`, or `Dexcom` — confirmed variants are `CGM CONSENT FORM`,
+`Libre consent`, and `dexcom consent`. A patient may have one of these and not the
+others. Matching only `CGM CONSENT FORM` silently skips every Libre and Dexcom
+patient — this is a confirmed failure mode, not a hypothetical.
 
-A signed consent means a sensor was placed. Placements repeat — Dexcom 10-day
+Document dates appear **in the filename**, e.g.
+`CGM CONSENT FORM (12/05/2024)`. That date is typed by staff and can differ from
+the signature date inside the PDF — one confirmed case differs by 16 days. Use the
+filename date; mismatches surface as `CONSENT WITHOUT ENCOUNTER` exceptions rather
+than being guessed at.
+
+A signed consent means a sensor was placed **in the office, that day**.
+Patients who learn to place sensors at home stop generating consents while
+continuing to generate reports — so a patient with one consent and twenty reports
+is normal and correct, not a data problem. Never infer placements from report count. Placements repeat — Dexcom 10-day
 sensors can mean three in a month, and **each is its own event. Apply no cap.**
 
 For each consent file dated in the window:
@@ -188,7 +227,9 @@ thyroid patients.
 
 ### 5.4 — 95251 · CGM download · max once per rolling 30 days
 
-Documents: folder **`Continuous Glucose Monitor Report`**. Rolling 30 days, not
+Documents: folder **`CONTINUOUS GLUCOSE MONITOR REPORTS`** (plural). Dates are in
+the filenames, e.g. `CONTINUOUS GLUCOSE MONITOR REPORTS (02/14/2026)`. Some entries
+carry only a date and no name — treat those in this folder as reports. Rolling 30 days, not
 calendar month. 95251 is never coded without a report here, so this folder is the
 complete source of truth.
 
@@ -274,6 +315,16 @@ Reasons: `BLOCKED`, `UNREADABLE`, `PAGE_ERROR`, `CONSENT WITHOUT ENCOUNTER`,
 
 **`Run Log` tab.** Weeks covered, patients processed, failures, rows by code,
 start/end timestamps.
+
+---
+
+## 7.5 Before the pilot — check `Reporting`
+
+Open the `Reporting` menu in the top-right, and `Reports` on the schedule screen.
+List what is available. If either offers a charge/CPT export or a document index by
+date range, **stop and report it** — an export replaces most of Phase 1's ~13,000
+clicks with a file, and is both faster and more accurate. Do not start the sweep
+before checking.
 
 ---
 
