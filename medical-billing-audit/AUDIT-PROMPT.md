@@ -57,48 +57,59 @@ Provider for a row = whoever saw the patient and wrote that day's note.
 
 ---
 
-## 2. Architecture — three phases
-
-Chart documents drive the CGM and SDOH rules. The schedule drives Prolia. Medicare
-requires opening every encounter regardless. So:
+## 2. Architecture — two phases
 
 ```
-Phase 1  Schedule sweep      → roster of appointments + unique patient list
-Phase 2  Prolia encounters   → straight from the schedule, no chart documents
-Phase 3  Per-patient pass    → one chart open per patient, everything else
+Phase 1  Roster sweep    → who was on the schedule, and when. Read off the grid.
+Phase 2  Per-patient pass → one chart open per patient. Everything else happens here.
 ```
 
-**Phase 3 is patient-centric, and that matters.** A patient's chart lists *all*
-their encounters, whoever the provider was. Walking that list checks the G0136
-six-month window and the 95251 thirty-day window correctly across providers, at no
-extra cost. Never reconstruct a patient's history from the schedule.
+**Phase 2 is patient-centric, and that is the whole design.** A patient's chart
+lists *all* their encounters, whoever the provider was. Opening that chart **once**
+gives you every rule at the same time: G2211 on each encounter, the G0136 six-month
+window, the 95251 thirty-day window, the consent dates, and whether any encounter
+was a Prolia visit.
 
-Rows are assigned to provider tabs at output time, not traversal time.
+**Never open the same chart twice.** A patient seen in March, May, August and
+November is **one** chart open, not four. When the roster reaches that patient again
+in a later month, they are already in `completed_patients` — skip them, the answers
+are already recorded. Key on the **numeric patient ID** from the chart tab. This is
+not an optimization to apply where convenient; reopening charts is the single
+biggest way this run wastes days.
+
+Rows are assigned to provider tabs and to monthly workbooks at output time, not
+during traversal.
 
 ---
 
-## 3. Phase 1 — Schedule sweep
+## 3. Phase 1 — Roster sweep
 
 Walk the schedule across the 12-month window, **newest month first** (Medicare
 timely filing is 12 months from date of service, so the oldest end is least
 actionable if the run stops early).
 
 The date does **not** change the URL — navigate by clicking the date picker. Use
-the **weekly view** to cut this from ~250 clicks per provider to ~52.
+the **weekly view**: ~52 screens per provider, ~260 in total.
 
-For each week, for each of the five providers, click into **every** appointment.
-The weekly grid shows neither insurance nor visit type, so each one must be opened.
-From the **Appointment Info panel on the left**, record:
+**Read patient names straight off the grid cells. Do not click into appointments.**
+The grid prints the patient name in each cell, and that is all Phase 1 needs:
 
-- patient last name, first name, DOB
-- date of service, provider
-- visit type (verbatim)
-- **insurance plan name (verbatim)**
+- patient name
+- date of service
+- provider
+
+Insurance is **not** collected here — the chart header banner carries it in Phase 2,
+and it is more reliable there. Visit type is **not** collected here — Prolia is
+detected from the encounter note in Phase 2.
 
 Cancellations and no-shows do not appear — everything listed is a real appointment.
 
-Output of this phase: a roster of ~13,000 appointments, and a deduplicated patient
-list of roughly 2,000 unique patients.
+Output: a roster of ~13,000 appointments, deduplicated to roughly 2,000 unique
+patients. **The deduplicated list is what Phase 2 consumes.**
+
+If names in the grid cells turn out to be truncated or ambiguous, fall back to
+clicking appointments — but report that, because it changes the runtime by an order
+of magnitude.
 
 ### 3.1 Medicare status
 
@@ -116,42 +127,18 @@ below; the reviewer sorts on this column to decide what to act on.
 
 ---
 
-## 4. Phase 2 — Prolia
-
-For every roster appointment whose Visit Type contains `PROLIA INJECTION`
-(case-insensitive substring):
-
-Go **straight to the encounter**. Do not open chart documents — on a Prolia day the
-patient does nothing but receive the shot.
-
-Required codes:
-- `J0897` — flag if absent
-- `96401` — flag if absent
-- **either** `99213` **or** `99214` — flag as `99213 or 99214` **only if neither is
-  present**. Never report both as missing.
-
-All present → no row.
-
-A Medicare patient's Prolia visit is also subject to G2211 (§5.1) and will produce
-that row too, from Phase 3.
-
-Reviewer note, not a check: J0897 is per 1 mg, so 60 mg = 60 units. This audit
-checks code presence only, never units.
-
----
-
-## 5. Phase 3 — Per-patient pass
+## 4. Phase 2 — Per-patient pass
 
 For each unique patient in the roster, open the chart **once** and do all of the
 following before moving on. Cache the result in `audit-state.json` so no chart is
 opened twice.
 
 Read, in this order:
-1. **Chart documents** — the three folders below, with their listed dates.
+1. **Chart documents** — the consent and report folders below, with their dates.
 2. **The encounter list** — every encounter in the 12-month window, with dates,
    providers, and the codes in each Procedures section.
 
-### 5.0 Reading an encounter
+### 4.0 Reading an encounter
 
 Each encounter offers two documents: a **PDF summary** for faxing out, and an
 **editable in-office note**. **Open the editable in-office note.** Never the fax PDF.
@@ -163,7 +150,7 @@ digits inside a description will produce false matches.
 
 Unsigned notes **are** audited — mark the row `UNSIGNED NOTE`.
 
-### 5.1 — G2211 · Medicare only · every visit
+### 4.1 — G2211 · Medicare only · every visit
 
 Only for patients whose Medicare Type is TRADITIONAL or ADVANTAGE. This is the one
 rule with no document trigger, so every Medicare encounter in the window must be
@@ -171,7 +158,7 @@ opened and checked.
 
 For each such encounter: `G2211` not in Procedures → **flag**.
 
-### 5.2 — G0136 · Medicare only · max once per 6 months
+### 4.2 — G0136 · Medicare only · max once per 6 months
 
 > **UNRESOLVED — DO NOT RUN THIS RULE YET.** Two charts were inspected and neither
 > contained an `Insurance-documents` folder or anything resembling an SDOH form.
@@ -197,7 +184,7 @@ Separately: a Medicare patient with encounters in the window but **no SDOH file 
 the preceding 6 months** → **`SDOH Care Gap` tab**, never Missing Codes. No form
 means the assessment was not performed; there is nothing to code.
 
-### 5.3 — 95250 · CGM placement · per placement, no monthly cap
+### 4.3 — 95250 · CGM placement · per placement, no monthly cap
 
 Documents: the consent folder. **Folder names are free-typed and vary by patient.**
 Match case-insensitively any folder whose name contains `consent` together with
@@ -225,7 +212,7 @@ For each consent file dated in the window:
 Check **every** patient's folder, not only diabetics — sensors are also placed on
 thyroid patients.
 
-### 5.4 — 95251 · CGM download · max once per rolling 30 days
+### 4.4 — 95251 · CGM download · max once per rolling 30 days
 
 Documents: folder **`CONTINUOUS GLUCOSE MONITOR REPORTS`** (plural). Dates are in
 the filenames, e.g. `CONTINUOUS GLUCOSE MONITOR REPORTS (02/14/2026)`. Some entries
@@ -246,9 +233,30 @@ The row records patient, DOB, and code regardless. Put `NO ENCOUNTER IN WINDOW` 
 Why Flagged, leave Date of Service blank, and assign it to the provider of that
 patient's most recent encounter.
 
+### 4.5 — Prolia · all insurances
+
+An encounter is a **Prolia encounter** when its note records that the patient
+received a Prolia injection. The appointment's visit type (`PROLIA INJECTION`) is
+corroborating when available, never required — detection happens from the note, in
+this same encounter pass.
+
+On a Prolia day the patient does nothing but receive the shot.
+
+Required codes:
+- `J0897` — flag if absent
+- `96401` — flag if absent
+- **either** `99213` **or** `99214` — flag as `99213 or 99214` **only if neither is
+  present**. Never report both as missing.
+
+All present → no row. A Medicare patient's Prolia encounter is also subject to
+G2211 (§4.1) and will produce that row too.
+
+Reviewer note, not a check: J0897 is per 1 mg, so 60 mg = 60 units. This audit
+checks code presence only, never units.
+
 ---
 
-## 6. Checkpointing — required
+## 5. Checkpointing — required
 
 Create `./audit-state.json` before starting:
 
@@ -259,8 +267,10 @@ Create `./audit-state.json` before starting:
 
 - Phase 1: after **every week**, append roster entries, add the week key
   (`"2026-08-W3"`) to `completed_weeks`, write to disk.
-- Phase 3: after **every patient**, append rows and add the patient to
+- Phase 2: after **every patient**, append rows and add the patient ID to
   `completed_patients`, write to disk.
+- **Check `completed_patients` before every chart open.** A patient already in it
+  is done for the entire 12 months — every rule, every month. Skip them.
 - **On startup, read this file first.** Skip completed weeks and completed patients.
   Never restart from scratch. Never re-open a chart already done.
 - On logout, hang, or crash: re-login, re-read state, continue. A crash is not a
@@ -273,7 +283,7 @@ file is what makes that survivable.
 
 ---
 
-## 7. Output
+## 6. Output
 
 One `.xlsx` per calendar month in
 `/Users/jeremi/Documents/EliteDiabetes - Billing report/`, named `2026-08.xlsx`.
@@ -318,34 +328,29 @@ start/end timestamps.
 
 ---
 
-## 7.4 Before the pilot — can Phase 1 avoid clicking every appointment?
+## 7. Before the pilot — three checks
 
-The weekly grid already prints patient names in the cells, so the roster can
-likely be read straight off it — roughly 260 screen reads (52 weeks x 5 providers)
-instead of ~13,000 appointment clicks. Insurance is not needed here; the chart
-header carries it in Phase 3.
+### 7.1 Can the roster be read off the grid?
 
-That leaves visit type, needed only for Prolia. Check both, and report:
+Open one week in Weekly View and confirm patient names are legible in the cells
+without clicking. If they are, Phase 1 is ~260 screen reads. If names are truncated
+or ambiguous, check whether **Daily View** shows them in full, and only fall back to
+clicking each appointment if neither works. Report which path you took — it changes
+the runtime by an order of magnitude.
 
-1. Does **Daily View** show the appointment reason or visit type as a column, where
-   Weekly View does not? If so, use Daily View for the roster sweep.
-2. Does the encounter note itself identify a Prolia visit? If so, drop visit type
-   from Phase 1 entirely and detect Prolia during the Phase 3 encounter pass.
+### 7.2 Where the cost actually is
 
-If either works, use it and say so. Only fall back to clicking each appointment if
-neither does.
+Chart opens are ~2,000, once per unique patient. The volume is in **encounter
+opens**: G2211 has no document trigger, so every Medicare encounter in the window
+must be read. A Medicare patient seen six times is **one chart open and six
+encounters read within it**.
 
-### Where the cost actually is
+Check whether the `Encounters` list displays the Procedures codes inline. If it
+does, those six encounters cost one page load instead of six, and the whole run
+gets dramatically cheaper. Report the answer either way, and report chart-open and
+encounter-open counts separately.
 
-Chart opens are ~2,000 (once per unique patient, already deduplicated). The real
-volume is **encounter opens**: G2211 has no document trigger, so every Medicare
-encounter in the window must be opened — a Medicare patient seen six times is one
-chart open and six encounter opens. Expect this to dominate the runtime. Report the
-encounter-open count separately from the chart-open count.
-
----
-
-## 7.5 Before the pilot — check `Reporting`
+### 7.3 Check `Reporting` for an export
 
 Open the `Reporting` menu in the top-right, and `Reports` on the schedule screen.
 List what is available. If either offers a charge/CPT export or a document index by
@@ -357,7 +362,7 @@ before checking.
 
 ## 8. Pilot first — do not skip
 
-Run **one month, all five providers, all three phases.** Produce the workbook, then
+Run **one month, all five providers, both phases.** Produce the workbook, then
 stop and report:
 - Appointments swept, charts opened, elapsed time
 - Rows flagged, by code
