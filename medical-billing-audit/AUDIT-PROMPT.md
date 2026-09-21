@@ -318,6 +318,33 @@ start/end timestamps.
 
 ---
 
+## 7.4 Before the pilot — can Phase 1 avoid clicking every appointment?
+
+The weekly grid already prints patient names in the cells, so the roster can
+likely be read straight off it — roughly 260 screen reads (52 weeks x 5 providers)
+instead of ~13,000 appointment clicks. Insurance is not needed here; the chart
+header carries it in Phase 3.
+
+That leaves visit type, needed only for Prolia. Check both, and report:
+
+1. Does **Daily View** show the appointment reason or visit type as a column, where
+   Weekly View does not? If so, use Daily View for the roster sweep.
+2. Does the encounter note itself identify a Prolia visit? If so, drop visit type
+   from Phase 1 entirely and detect Prolia during the Phase 3 encounter pass.
+
+If either works, use it and say so. Only fall back to clicking each appointment if
+neither does.
+
+### Where the cost actually is
+
+Chart opens are ~2,000 (once per unique patient, already deduplicated). The real
+volume is **encounter opens**: G2211 has no document trigger, so every Medicare
+encounter in the window must be opened — a Medicare patient seen six times is one
+chart open and six encounter opens. Expect this to dominate the runtime. Report the
+encounter-open count separately from the chart-open count.
+
+---
+
 ## 7.5 Before the pilot — check `Reporting`
 
 Open the `Reporting` menu in the top-right, and `Reports` on the schedule screen.
