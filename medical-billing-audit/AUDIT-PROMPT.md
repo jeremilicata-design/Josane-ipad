@@ -136,9 +136,35 @@ Medicare Advantage, Aetna Medicare, similar), `COMMERCIAL`, or `UNCLEAR`. Medica
 as secondary counts. Store the plan name verbatim too. Both TRADITIONAL and
 ADVANTAGE are treated as Medicare below; the reviewer sorts on the column.
 
-### Rule A — G2211 · Medicare only · every visit
-Every Medicare encounter in the window without `G2211` in Procedures → flag.
-There is no document trigger; every Medicare encounter must be checked.
+### Rule A — G2211 · Medicare only · tied to the E/M code, not the visit type
+
+G2211 belongs on a Medicare encounter **whenever that encounter carries an
+office/outpatient E/M code of `99212`, `99213`, `99214`, or `99215`.**
+
+- **`99211` does NOT trigger this rule.** It is the nurse-visit code and is
+  excluded deliberately, even though it matches the "9921x" shape.
+- **Modality is irrelevant.** In-office, telehealth/TEL, and phone visits are all
+  treated identically. Do not try to classify the visit type — look only at the
+  E/M code present in Procedures.
+- **No qualifying E/M present → no G2211 row.** An encounter with no E/M (nurse
+  visits, injection-only visits, procedure-only encounters) is not flagged for
+  G2211 at all.
+
+So: Medicare patient AND Procedures contains 99212/99213/99214/99215 AND `G2211`
+is absent → **flag**.
+
+**Interaction with Rule E.** If Rule E flags a Prolia encounter for a missing E/M
+(`99213 or 99214`), do not also emit a G2211 row for that encounter — there is no
+qualifying E/M present yet. Instead append to that row's Why Flagged:
+`if E/M is added, G2211 is also needed`. This keeps the two from being double
+counted while still telling the reviewer the whole story.
+
+**Open question to confirm with the biller before the full run:** new-patient
+office/outpatient codes are `99202`–`99205`, not `9921x`. The rule as given covers
+established patients only. If new-patient encounters should also carry G2211, add
+99202–99205 to the trigger list. Until confirmed, treat a Medicare encounter
+carrying 99202–99205 without G2211 as a row with Confidence = `REVIEW` and
+Why Flagged = `new patient E/M — confirm G2211 applies`.
 
 ### Rule B — G0136 · Medicare only · max once per 6 months
 ONLY if 0.6 located the SDOH form. For each SDOH document dated in the window:
