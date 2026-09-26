@@ -136,22 +136,21 @@ Medicare Advantage, Aetna Medicare, similar), `COMMERCIAL`, or `UNCLEAR`. Medica
 as secondary counts. Store the plan name verbatim too. Both TRADITIONAL and
 ADVANTAGE are treated as Medicare below; the reviewer sorts on the column.
 
-### Rule A — G2211 · Medicare only · tied to the E/M code, not the visit type
+### Rule A — G2211 · Medicare only · only when an E/M is billed
 
-G2211 belongs on a Medicare encounter **whenever that encounter carries an
-office/outpatient E/M code of `99212`, `99213`, `99214`, or `99215`.**
+G2211 can only be billed alongside an office/outpatient E/M. **No E/M, no G2211.**
 
-- **`99211` does NOT trigger this rule.** It is the nurse-visit code and is
-  excluded deliberately, even though it matches the "9921x" shape.
-- **Modality is irrelevant.** In-office, telehealth/TEL, and phone visits are all
-  treated identically. Do not try to classify the visit type — look only at the
-  E/M code present in Procedures.
-- **No qualifying E/M present → no G2211 row.** An encounter with no E/M (nurse
-  visits, injection-only visits, procedure-only encounters) is not flagged for
-  G2211 at all.
-
-So: Medicare patient AND Procedures contains 99212/99213/99214/99215 AND `G2211`
-is absent → **flag**.
+- Encounter carries `99213`, `99214`, or `99215` and `G2211` is absent → **flag**
+  (Confidence `HIGH`).
+- Encounter carries `99212` and `G2211` is absent → **flag with Confidence
+  `REVIEW`**, Why Flagged = `99212 — confirm G2211 applies`. (The biller listed
+  99212 as qualifying; staff listed only 99213–99215. Unresolved, so surface it
+  without asserting it.)
+- **`99211` never triggers this rule** (nurse-visit code).
+- **Visits with no E/M never get a G2211 row.** This includes sensor-placement-only
+  visits (95250 alone), FNA visits, injection-only visits, and nurse visits.
+- **Modality is irrelevant.** In-office, telehealth/TEL, and phone visits are
+  treated identically — look only at which E/M code is in Procedures.
 
 **Interaction with Rule E.** If Rule E flags a Prolia encounter for a missing E/M
 (`99213 or 99214`), do not also emit a G2211 row for that encounter — there is no
